@@ -24,23 +24,20 @@ eibaddr_t knx_convert_gaddr(const char *addr) {
  *  - currently only supporting groups with a binary datatype
  *  - state is: 0 = off, 1 = on
  */
-void knx_send(char* url, char* group, int state) {
+void knx_send(char* url, eibaddr_t group, int state) {
 	int len;
-	eibaddr_t dest;
 	EIBConnection *con;
 	unsigned char buf[2];
 
 	con = EIBSocketURL(url);
 	if (!con)
 		error("KNX Group Socket Open failed");
-	
-	dest = knx_convert_gaddr(group);
    
     // setup the knx telegram payload
 	buf[0] = 0;
 	buf[1] = 0x80 + state;
 
-	if (EIBOpenT_Group(con, dest, 1) == -1)
+	if (EIBOpenT_Group(con, group, 1) == -1)
 		error("KNX Group Socket Connect failed");
 
 	len = EIBSendAPDU(con, 2, buf);
@@ -56,10 +53,10 @@ void knx_send(char* url, char* group, int state) {
  *  - return value is: 0 = off, 1 = on
  *  TODO: add a timeout using EIB_Poll_FD
  */
-int knx_read(char* url, char* group) {
+int knx_read(char* url, eibaddr_t group) {
 	int result;
 	int len;
-	eibaddr_t dest, src;
+	eibaddr_t src;
 	EIBConnection *con;
 	unsigned char buf[200];
 	unsigned char req_buf[2] = { 0, 0 };
@@ -67,10 +64,8 @@ int knx_read(char* url, char* group) {
     con = EIBSocketURL(url);
 	if (!con)
 		error("KNX Group Socket Open failed");
-	
-	dest = knx_convert_gaddr(group);
 
-    if (EIBOpenT_Group(con, dest, 0) == -1)
+    if (EIBOpenT_Group(con, group, 0) == -1)
 		error("KNX Group Socket Connect failed");
 
     len = EIBSendAPDU(con, 2, req_buf);
@@ -106,10 +101,9 @@ int knx_read(char* url, char* group) {
  *  - returns all telegrams sent over the knx bus with binary values
  *  - group names are put into the group buffer and the value is returned
  */
-int knx_watch(char* url, char* group) {
-	int value;
+void knx_watch(char* url, eibaddr_t *group, int *value) {
 	int len;
-	eibaddr_t dest, src;
+	eibaddr_t src;
 	EIBConnection *con;
 	unsigned char buf[200];
 
@@ -122,7 +116,7 @@ int knx_watch(char* url, char* group) {
 
 	while (1) {
 		len = EIBGetGroup_Src(con, sizeof (buf),
-							  (unsigned char*)buf, &src, &dest);
+							  (unsigned char*)buf, &src, group);
 
 		if (len == -1 || len < 2)
 	    	error("KNX Read failed");
@@ -135,15 +129,11 @@ int knx_watch(char* url, char* group) {
 		if (((buf[1] & 0xC0) == 0x40) || 
 			((buf[1] & 0xC0) == 0x80)) {
 			if (len == 2) {
-				value = buf[1] & 0x3F;
+				*value = buf[1] & 0x3F;
 				break;
 			}
 		}
 	}
-
-	sprintf(group, "%d/%d/%d", (dest >> 11) & 0x1f,
-			(dest >> 8) & 0x07, (dest) & 0xff);
 	
 	EIBClose(con);
-	return value;
 }

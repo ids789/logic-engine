@@ -20,20 +20,25 @@ All configuration and logic is defined in a Chibi Scheme script.
 ##### KNXD Url
 Bind the knxd url to the`knx-url` symbol e.g.`(define knx-url "ip:192.168.1.15:1234")`
 
+##### define-item
+Define a new knx group item using: `(define-item name address)`
+* `name` is a symbol to bind the group to
+* `address` is a group address string e.g. `"1/2/3"`
+
 ##### knx:send
-Send a telegram using: `(knx:send group state)`  
-* `group` is a group address string e.g. `"1/2/3"`
+Send a telegram using: `(knx:send item state)`  
+* `item` is an item bound using `define-item`
 * `state` is a boolean value for off or on e.g. on =`#t`
 
 ##### knx:read
-Read a knx group value: `(knx:read group)`
-* `group` is a group address string e.g. `"1/2/3"`
+Read a knx group value: `(knx:read item)`
+* `item` is an item bound using `define-item`
 * returns the boolean value of the group e.g. on =`#t`
 
 ##### knx:watch
 Listen to the knx bus and run callback functions on events: `(knx:watch rule-list)`
 * `rule-list` is an associated list of:
-  * a group address to trigger on
+  * a item to trigger on bound using `define-item`
   * a callback function, takes 1 argument for the new group value
 
 ## Usage

@@ -3,6 +3,32 @@
 #include <stdio.h>
 
 /*
+ *  func_def_item: create a new physical device item
+ *  - arguments: a name symbol
+ *               a knx address string
+ */
+static sexp func_def_item(sexp ctx, sexp self, sexp_sint_t n, 
+                          sexp name, sexp addr) {
+	item new;
+	
+	sexp_gc_var1(sname);
+	sexp_gc_preserve1(ctx, sname);
+	sname = sexp_symbol_to_string(ctx, name);
+
+	new.name = malloc(sexp_unbox_fixnum(sexp_string_size(sname)));
+	strcpy(new.name, sexp_string_data(sname));
+	new.address = knx_convert_gaddr(sexp_string_data(addr));
+	add_item(new);
+
+	// link the item's scheme symbol to its registry location
+	sexp_env_define(ctx, sexp_context_env(ctx), name, 
+	                sexp_make_fixnum(item_registry_size-1));
+
+	sexp_gc_release1(ctx);
+	return SEXP_TRUE;
+}
+
+/*
  *  lookup_knx_url: get the url of the knxd server
  *  - the scheme script should save it to the 'knx-url' symbol
  */
@@ -24,37 +50,41 @@ void lookup_knx_url(sexp ctx, char* url) {
 
 /*
  *  func_knx_send: a scheme function wrapper for the knx_send function
- *  - arguments: a group string: "X/X/X"
+ *  - arguments: a group symbol
  *               a state: on = #t, off = #f
  */
 static sexp func_knx_send(sexp ctx, sexp self, sexp_sint_t n, 
-                              sexp group, sexp state) {
+                              sexp dest, sexp state) {
 	char url[200];
+	item dest_item;
 
-	if (!sexp_stringp(group) || !sexp_booleanp(state))
+	if (!sexp_numberp(dest) || !sexp_booleanp(state))
 		error("knx:send: invalid arguments");
-	
+
+	dest_item = get_item(sexp_unbox_fixnum(dest));
 	lookup_knx_url(ctx, url);
-	knx_send(url, sexp_string_data(group), 
-			 sexp_unbox_boolean(state));
+
+	knx_send(url, dest_item.address, sexp_unbox_boolean(state));
 
 	return SEXP_TRUE;
 }
 
 /*
  *  func_knx_read: a scheme function wrapper for the knx_read function
- *	- argument: a group string: "X/X/X"
+ *	- argument: a group symbol
  */
-static sexp func_knx_read(sexp ctx, sexp self, sexp_sint_t n, sexp group) {
+static sexp func_knx_read(sexp ctx, sexp self, sexp_sint_t n, sexp dest) {
 	char url[200];
 	int res;
+	item dest_item;
 
-	if (!sexp_stringp(group))
+	if (!sexp_numberp(dest))
 		error("knx:read: invalid argument");
 
+	dest_item = get_item(sexp_unbox_fixnum(dest));
 	lookup_knx_url(ctx, url);
 
-	res = knx_read(url, sexp_string_data(group));
+	res = knx_read(url, dest_item.address);
 
 	return sexp_make_boolean(res);
 }
@@ -65,26 +95,31 @@ static sexp func_knx_read(sexp ctx, sexp self, sexp_sint_t n, sexp group) {
  */
 static sexp func_knx_watch(sexp ctx, sexp self, sexp_sint_t n, sexp rules) {
 	char url[200];
-	char group[200];
-	int res, i;
+	int pos, res, i;
+	eibaddr_t group;
 
 	if (!sexp_listp(ctx, rules))
 		error("knx:read: invalid argument");
 
-	sexp_gc_var3(ev_group, rulesv, rulec);
-	sexp_gc_preserve3(ctx, ev_group, rulesv, rulec);
+	sexp_gc_var2(rule, rulesv);
+	sexp_gc_preserve2(ctx, rule, rulesv);
 	rulesv = sexp_list_to_vector(ctx, rules);
 
 	lookup_knx_url(ctx, url);
 
 	while(1) {
-		res = knx_watch(url, group);
-		ev_group = sexp_c_string(ctx, group, strlen(group));
+		knx_watch(url, &group, &res);
+		pos = lookup_item(group);
+
+		// unknown group recieved
+		if(res == -1)
+			continue;
 
 		for (i = 0; i < sexp_unbox_fixnum(sexp_length(ctx, rules)); i++) {
-			rulec = sexp_vector_ref(rulesv, sexp_make_fixnum(i));
-			if(sexp_unbox_boolean(sexp_equalp(ctx, ev_group, sexp_car(rulec)))) {
-				sexp_apply(ctx, sexp_cdr(rulec),
+			rule = sexp_vector_ref(rulesv, sexp_make_fixnum(i));
+			if(sexp_unbox_boolean(sexp_equalp(ctx, sexp_make_fixnum(pos), 
+			                                       sexp_car(rule)))) {
+				sexp_apply(ctx, sexp_cdr(rule),
 				           sexp_list1(ctx, sexp_make_fixnum(res)));
 			}
 		}
@@ -99,11 +134,17 @@ int main(int argc, char** argv) {
 	if (argc != 2)
 		error("usage: %s script", argv[0]);
 
+	item_registry = NULL;
+	item_registry_size = 0;
+
 	sexp ctx;
 	ctx = sexp_make_eval_context(NULL, NULL, NULL, 0, 0);
 	sexp_load_standard_env(ctx, NULL, SEXP_SEVEN);
 	sexp_load_standard_ports(ctx, NULL, stdin, stdout, stderr, 1);
 	
+	sexp_define_foreign(ctx, sexp_context_env(ctx),
+						"define-item", 2, (sexp_proc1)func_def_item);
+
 	sexp_define_foreign(ctx, sexp_context_env(ctx),
 						"knx:send", 2, (sexp_proc1)func_knx_send);
 
